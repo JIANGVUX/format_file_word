@@ -172,16 +172,24 @@ def save_config_json_bytes(cfg: ReportConfig) -> bytes:
 # -----------------------
 # OOXML helpers
 # -----------------------
-def _set_font_all_scripts(font_element, font_name: str):
-    rFonts = font_element.rFonts
-    rFonts.set(qn("w:ascii"), font_name)
-    rFonts.set(qn("w:hAnsi"), font_name)
-    rFonts.set(qn("w:eastAsia"), font_name)
-    rFonts.set(qn("w:cs"), font_name)
+def _set_style_rfonts(style_obj, font_name: str):
+    """Set font for all scripts (ascii/hAnsi/eastAsia/cs) at STYLE level.
+    python-docx Font object doesn't expose rFonts; we must edit the underlying style XML.
+    """
+    try:
+        rPr = style_obj._element.get_or_add_rPr()
+        rFonts = rPr.get_or_add_rFonts()
+        rFonts.set(qn("w:ascii"), font_name)
+        rFonts.set(qn("w:hAnsi"), font_name)
+        rFonts.set(qn("w:eastAsia"), font_name)
+        rFonts.set(qn("w:cs"), font_name)
+    except Exception:
+        # Best-effort: if the style element shape differs, we skip silently
+        pass
 
 def _apply_style_to_docx_style(docx_style, cfg: StyleConfig):
     docx_style.font.name = cfg.font_name
-    _set_font_all_scripts(docx_style.font, cfg.font_name)
+    _set_style_rfonts(docx_style, cfg.font_name)
     docx_style.font.size = Pt(cfg.font_size_pt)
     docx_style.font.bold = cfg.bold
     docx_style.font.italic = cfg.italic
