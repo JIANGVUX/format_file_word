@@ -1,12 +1,11 @@
 # formatter.py
-import os
-from dataclasses import dataclass, asdict
-from typing import Optional, Dict, Any, List, Tuple
 import json
 import io
+from dataclasses import dataclass, asdict, field
+from typing import Optional, Dict, Any, List
 
 from docx import Document
-from docx.shared import Pt, Cm
+from docx.shared import Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -36,6 +35,9 @@ PAPER_PRESET = {
     "A4_LANDSCAPE": {"width_cm": 29.7, "height_cm": 21.0},
 }
 
+# -----------------------
+# Dataclasses (FIXED)
+# -----------------------
 @dataclass
 class StyleConfig:
     font_name: str = "Times New Roman"
@@ -90,19 +92,52 @@ class ProcessingConfig:
 
 @dataclass
 class ReportConfig:
-    normal: StyleConfig = StyleConfig()
-    title: StyleConfig = StyleConfig(font_size_pt=16.0, bold=True, alignment="CENTER", space_after_pt=12.0, first_line_indent_cm=0.0, line_spacing=1.2)
-    heading1: StyleConfig = StyleConfig(font_size_pt=14.0, bold=True, alignment="LEFT", space_before_pt=12.0, space_after_pt=6.0, first_line_indent_cm=0.0, line_spacing=1.2, keep_with_next=True)
-    heading2: StyleConfig = StyleConfig(font_size_pt=13.0, bold=True, alignment="LEFT", space_before_pt=10.0, space_after_pt=4.0, first_line_indent_cm=0.0, line_spacing=1.2, keep_with_next=True)
-    heading3: StyleConfig = StyleConfig(font_size_pt=13.0, bold=True, italic=True, alignment="LEFT", space_before_pt=8.0, space_after_pt=4.0, first_line_indent_cm=0.0, line_spacing=1.2, keep_with_next=True)
-    caption: StyleConfig = StyleConfig(font_size_pt=11.0, italic=True, alignment="CENTER", space_before_pt=6.0, space_after_pt=6.0, first_line_indent_cm=0.0, line_spacing=1.0)
-    pagesetup: PageSetupConfig = PageSetupConfig()
-    pagenumber: PageNumberConfig = PageNumberConfig()
-    toc: TocConfig = TocConfig()
-    processing: ProcessingConfig = ProcessingConfig()
+    # ✅ dùng default_factory để tránh "mutable default" trên Python 3.12/3.13
+    normal: StyleConfig = field(default_factory=StyleConfig)
+    title: StyleConfig = field(default_factory=lambda: StyleConfig(
+        font_size_pt=16.0, bold=True, alignment="CENTER",
+        space_after_pt=12.0, first_line_indent_cm=0.0, line_spacing=1.2
+    ))
+    heading1: StyleConfig = field(default_factory=lambda: StyleConfig(
+        font_size_pt=14.0, bold=True, alignment="LEFT",
+        space_before_pt=12.0, space_after_pt=6.0,
+        first_line_indent_cm=0.0, line_spacing=1.2, keep_with_next=True
+    ))
+    heading2: StyleConfig = field(default_factory=lambda: StyleConfig(
+        font_size_pt=13.0, bold=True, alignment="LEFT",
+        space_before_pt=10.0, space_after_pt=4.0,
+        first_line_indent_cm=0.0, line_spacing=1.2, keep_with_next=True
+    ))
+    heading3: StyleConfig = field(default_factory=lambda: StyleConfig(
+        font_size_pt=13.0, bold=True, italic=True, alignment="LEFT",
+        space_before_pt=8.0, space_after_pt=4.0,
+        first_line_indent_cm=0.0, line_spacing=1.2, keep_with_next=True
+    ))
+    caption: StyleConfig = field(default_factory=lambda: StyleConfig(
+        font_size_pt=11.0, italic=True, alignment="CENTER",
+        space_before_pt=6.0, space_after_pt=6.0,
+        first_line_indent_cm=0.0, line_spacing=1.0
+    ))
 
+    pagesetup: PageSetupConfig = field(default_factory=PageSetupConfig)
+    pagenumber: PageNumberConfig = field(default_factory=PageNumberConfig)
+    toc: TocConfig = field(default_factory=TocConfig)
+    processing: ProcessingConfig = field(default_factory=ProcessingConfig)
+
+# -----------------------
+# Config helpers
+# -----------------------
 def cfg_to_dict(cfg: ReportConfig) -> Dict[str, Any]:
     return asdict(cfg)
+
+def deep_merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(a)
+    for k, v in (b or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
 
 def cfg_from_dict(d: Dict[str, Any]) -> ReportConfig:
     default = cfg_to_dict(ReportConfig())
@@ -127,15 +162,6 @@ def cfg_from_dict(d: Dict[str, Any]) -> ReportConfig:
         processing=build_processing(merged["processing"]),
     )
 
-def deep_merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
-    out = dict(a)
-    for k, v in (b or {}).items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = deep_merge(out[k], v)
-        else:
-            out[k] = v
-    return out
-
 def load_config_json_bytes(data: bytes) -> ReportConfig:
     d = json.loads(data.decode("utf-8"))
     return cfg_from_dict(d)
@@ -143,6 +169,9 @@ def load_config_json_bytes(data: bytes) -> ReportConfig:
 def save_config_json_bytes(cfg: ReportConfig) -> bytes:
     return json.dumps(cfg_to_dict(cfg), ensure_ascii=False, indent=2).encode("utf-8")
 
+# -----------------------
+# OOXML helpers
+# -----------------------
 def _set_font_all_scripts(font_element, font_name: str):
     rFonts = font_element.rFonts
     rFonts.set(qn("w:ascii"), font_name)
@@ -158,7 +187,7 @@ def _apply_style_to_docx_style(docx_style, cfg: StyleConfig):
     docx_style.font.italic = cfg.italic
     if cfg.color_hex:
         try:
-            docx_style.font.color.rgb = bytes.fromhex(cfg.color_hex)
+            docx_style.font.color.rgb = RGBColor.from_string(cfg.color_hex)
         except Exception:
             pass
 
@@ -211,6 +240,9 @@ def _set_section_page_numbering(section, start_at: int, fmt: str, restart: bool)
         if pgNumType.get(qn("w:start")) is not None:
             pgNumType.attrib.pop(qn("w:start"), None)
 
+# -----------------------
+# Core formatter
+# -----------------------
 class DocxReportFormatter:
     def __init__(self, config: ReportConfig):
         self.cfg = config
@@ -351,7 +383,9 @@ class DocxReportFormatter:
 
             target_is_footer = pn.position.startswith("FOOTER")
             align_key = pn.position.split("_", 1)[1]
-            alignment = {"LEFT": WD_ALIGN_PARAGRAPH.LEFT, "CENTER": WD_ALIGN_PARAGRAPH.CENTER, "RIGHT": WD_ALIGN_PARAGRAPH.RIGHT}.get(align_key, WD_ALIGN_PARAGRAPH.CENTER)
+            alignment = {"LEFT": WD_ALIGN_PARAGRAPH.LEFT, "CENTER": WD_ALIGN_PARAGRAPH.CENTER, "RIGHT": WD_ALIGN_PARAGRAPH.RIGHT}.get(
+                align_key, WD_ALIGN_PARAGRAPH.CENTER
+            )
 
             hf = section.footer if target_is_footer else section.header
             para = hf.paragraphs[0] if hf.paragraphs else hf.add_paragraph()
